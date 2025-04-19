@@ -8,6 +8,8 @@
 import AppKit
 import SwiftUI
 import KeyboardShortcuts
+import Carbon.HIToolbox
+import Foundation
 
 extension KeyboardShortcuts.Name {
     static let toggleInteraction = Self("toggleInteraction")
@@ -26,9 +28,12 @@ class FloatingPanel: NSPanel {
 }
 
 public class AppDelegate: NSObject, NSApplicationDelegate {
+    
     var window: FloatingPanel!
+    var launcherHotKeyRef: EventHotKeyRef?
+    
     public func applicationDidFinishLaunching(_ notification: Notification) {
-        
+        registerGlobalHotkey()
         KeyboardShortcuts.setShortcut(.init(.one, modifiers: [.command, .shift]), for: .toggleInteraction)
 
         let contentView = MySwiftUIView()
@@ -57,6 +62,52 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             self.window.ignoresMouseEvents.toggle()
             print("Interaction mode toggled: \(self.window.ignoresMouseEvents)")
         }
+    }
+    
+    func registerGlobalHotkey() {
+        let modifierKeys: UInt32 = UInt32(controlKey | shiftKey)
+        let keyCode: UInt32 = 0x31 // Space key (0x31 is spacebar)
+
+        var eventHotKeyID = EventHotKeyID(signature: OSType("cmfy".fourCharCodeValue), id: 1)
+
+        RegisterEventHotKey(
+            keyCode,
+            modifierKeys,
+            eventHotKeyID,
+            GetApplicationEventTarget(),
+            0,
+            &launcherHotKeyRef
+        )
+
+        let eventHandler: EventHandlerUPP = { (_, eventRef, _) in
+            var hotKeyID = EventHotKeyID()
+            GetEventParameter(eventRef, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout.size(ofValue: hotKeyID), nil, &hotKeyID)
+
+            if hotKeyID.signature == OSType("cmfy".fourCharCodeValue) {
+                print("🔥 Global hotkey pressed! Open ComfyCommand!")
+                // TODO: open your launcher window here
+            }
+            return noErr
+        }
+
+        InstallEventHandler(
+            GetApplicationEventTarget(),
+            eventHandler,
+            1,
+            [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))],
+            nil,
+            nil
+        )
+    }
+}
+
+extension String {
+    var fourCharCodeValue: FourCharCode {
+        var result: FourCharCode = 0
+        for char in utf16 {
+            result = (result << 8) + FourCharCode(char)
+        }
+        return result
     }
 }
 

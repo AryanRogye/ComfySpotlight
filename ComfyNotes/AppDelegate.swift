@@ -17,6 +17,7 @@ extension KeyboardShortcuts.Name {
 
 class FloatingPanel: NSPanel {
     var isInteractionEnabled = true
+    var onClose: (() -> Void)?
     
     override var canBecomeKey: Bool {
         return isInteractionEnabled
@@ -25,50 +26,134 @@ class FloatingPanel: NSPanel {
     override var canBecomeMain: Bool {
         return isInteractionEnabled
     }
+    override func resignKey() {
+        super.resignKey()
+        onClose?()
+        close()
+    }
 }
 
 public class AppDelegate: NSObject, NSApplicationDelegate {
-    
+    static var shared: AppDelegate!
+
     var window: FloatingPanel!
+    var searchWindow: FloatingPanel!
     var launcherHotKeyRef: EventHotKeyRef?
     
+    var isSearchWindowOpen: Bool = false
+    
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        AppDelegate.shared = self
+
+        /// Register Global Hotkey for "Start of App": The SearchView
         registerGlobalHotkey()
+        /// This is for closing the sesarch win
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if self.isSearchWindowOpen {
+                if event.keyCode == 53 {
+                    self.closeSearchWindow()
+                }
+            }
+            return event;
+        }
+
+        
         KeyboardShortcuts.setShortcut(.init(.one, modifiers: [.command, .shift]), for: .toggleInteraction)
-
-        let contentView = MySwiftUIView()
-
-        window = FloatingPanel(
-            contentRect: NSRect(x: 200, y: 200, width: 600, height: 600),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
         
-        // 3. Configure your window rules
-        window.level = .screenSaver // ➡️ Stays above everything
-        window.backgroundColor = .gray.withAlphaComponent(0.3)
-        window.isOpaque = false // ➡️ No background fill
-        window.hasShadow = false // ➡️ No drop shadow
-        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary] // ➡️ Appears in all Spaces
-        window.isMovableByWindowBackground = true // ➡️ Drag around easily
-        window.ignoresMouseEvents = false // ➡️ (important for your cursor tracking later)
-        
-        // 4. Set the SwiftUI view into the panel
-        window.contentView = NSHostingView(rootView: contentView)
-        window.makeKeyAndOrderFront(nil)
         
         KeyboardShortcuts.onKeyUp(for: .toggleInteraction) {
+            guard let _ = self.window else { return }
             self.window.ignoresMouseEvents.toggle()
             print("Interaction mode toggled: \(self.window.ignoresMouseEvents)")
         }
     }
     
+    
+    func openNote(note: Binding<Note>) {
+        let noteView = MySwiftUIView(note: note)
+
+        let noteWindow = FloatingPanel(
+            contentRect: NSRect(x: 300, y: 300, width: 400, height: 400),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+
+        noteWindow.level = .screenSaver // ➡️ Stays above everything
+        noteWindow.backgroundColor = .gray.withAlphaComponent(0.3)
+        noteWindow.isOpaque = false // ➡️ No background fill
+        noteWindow.hasShadow = false // ➡️ No drop shadow
+        noteWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary] // ➡️ Appears in all Spaces
+        noteWindow.isMovableByWindowBackground = true // ➡️ Drag around easily
+        noteWindow.ignoresMouseEvents = false
+        
+        noteWindow.contentView = NSHostingView(rootView: noteView)
+        noteWindow.makeKeyAndOrderFront(nil)
+    }
+    
+    func openSearchLauncher() {
+        NotesStorage.shared.addMockNotes()
+
+        if searchWindow != nil {
+            if searchWindow.isVisible {
+                searchWindow.makeKeyAndOrderFront(nil)
+                return
+            }
+        }
+
+        // 1) Build your SwiftUI search view
+        let searchBar = SearchBar()
+
+        // 2) Wrap in a hosting controller
+        let hostingController = NSHostingController(rootView: searchBar)
+
+        // 3) Create the panel at any dummy size
+        searchWindow = FloatingPanel(
+          contentRect: .zero,
+          styleMask: [.borderless, .nonactivatingPanel],
+          backing: .buffered,
+          defer: false
+        )
+        /// Set its on close value to close it
+        searchWindow.onClose = { [weak self] in
+            self?.isSearchWindowOpen = false
+        }
+
+        // 4) Re‑apply your "always on top" rules
+        searchWindow.level = .screenSaver
+        searchWindow.backgroundColor = .windowBackgroundColor.withAlphaComponent(0)
+        searchWindow.isOpaque = false
+        searchWindow.hasShadow = true
+        searchWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        // …etc…
+
+        // 5) Embed the controller
+        searchWindow.contentViewController = hostingController
+
+        // 6) Let it layout and grab the true size
+        hostingController.view.layout()
+        let size = hostingController.view.fittingSize
+
+        // 7) Center & resize the panel
+        if let screen = NSScreen.main?.frame {
+          let origin = CGPoint(
+            x: (screen.width  - size.width)  / 2,
+            y: (screen.height - size.height) / 2
+          )
+          searchWindow.setFrame(CGRect(origin: origin, size: size), display: true)
+        }
+
+        // 8) Show it
+        searchWindow.makeKeyAndOrderFront(nil)
+    }
+        
+    
+    
     func registerGlobalHotkey() {
         let modifierKeys: UInt32 = UInt32(controlKey | shiftKey)
-        let keyCode: UInt32 = 0x31 // Space key (0x31 is spacebar)
+        let keyCode: UInt32 = 0x31 // spacebar
 
-        var eventHotKeyID = EventHotKeyID(signature: OSType("cmfy".fourCharCodeValue), id: 1)
+        let eventHotKeyID = EventHotKeyID(signature: OSType("cmfy".fourCharCodeValue), id: 1)
 
         RegisterEventHotKey(
             keyCode,
@@ -78,26 +163,41 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             0,
             &launcherHotKeyRef
         )
-
-        let eventHandler: EventHandlerUPP = { (_, eventRef, _) in
-            var hotKeyID = EventHotKeyID()
-            GetEventParameter(eventRef, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout.size(ofValue: hotKeyID), nil, &hotKeyID)
-
-            if hotKeyID.signature == OSType("cmfy".fourCharCodeValue) {
-                print("🔥 Global hotkey pressed! Open ComfyCommand!")
-                // TODO: open your launcher window here
-            }
-            return noErr
-        }
+        installHotkeyHandler()
+    }
+    
+    private func installHotkeyHandler() {
+        let eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 
         InstallEventHandler(
             GetApplicationEventTarget(),
-            eventHandler,
+            hotkeyCallback,
             1,
-            [EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))],
-            nil,
+            [eventType],
+            UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque()),
             nil
         )
+    }
+    
+    private func closeSearchWindow() {
+        self.searchWindow.close()
+        self.isSearchWindowOpen = false
+    }
+
+    private let hotkeyCallback: EventHandlerUPP = { (_, eventRef, userData) in
+        var hotKeyID = EventHotKeyID()
+        GetEventParameter(eventRef, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), nil, MemoryLayout.size(ofValue: hotKeyID), nil, &hotKeyID)
+
+        if hotKeyID.signature == OSType("cmfy".fourCharCodeValue) {
+            if let userData = userData {
+                let delegate = Unmanaged<AppDelegate>.fromOpaque(userData).takeUnretainedValue()
+                /// Have the search window open up
+                delegate.isSearchWindowOpen = true
+                delegate.openSearchLauncher()
+            }
+        }
+
+        return noErr
     }
 }
 
@@ -112,84 +212,14 @@ extension String {
 }
 
 struct MySwiftUIView: View {
-    @State private var text: String = ""
+    @Binding var note: Note
     var body: some View {
         ZStack {
-            TransparentTextEditor(text: $text)
+            TransparentTextEditor(text: $note.content)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(10)
         }
         .background(Color.clear)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-struct TransparentTextEditor: NSViewRepresentable {
-    @Binding var text: String // Binds to the text state in the SwiftUI view
-
-    // Creates the Coordinator instance
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    // Creates the NSScrollView and NSTextView
-    func makeNSView(context: Context) -> NSScrollView {
-        // Create the scroll view
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = false // Hide vertical scroller
-        scrollView.hasHorizontalScroller = false // Hide horizontal scroller
-        scrollView.drawsBackground = false // Make scroll view background transparent
-        scrollView.backgroundColor = .clear // Explicitly set background color to clear
-
-        // Create the text view
-        let textView = NSTextView()
-        textView.isEditable = true // Allow editing
-        textView.isSelectable = true // Allow text selection
-        textView.drawsBackground = false // Make text view background transparent
-        textView.backgroundColor = .clear // Explicitly set background color to clear
-        textView.textColor = NSColor.white // Set text color
-        textView.font = NSFont.systemFont(ofSize: 18) // Set font
-        textView.isRichText = false // Use plain text
-        textView.delegate = context.coordinator // Set the delegate for text changes
-        textView.string = text // Initialize with the bound text
-        // Allow text view to grow vertically automatically
-        textView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.textContainer?.widthTracksTextView = true
-        textView.autoresizingMask = [.width] // Ensure it resizes horizontally with the scroll view
-
-        // Set the text view as the document view of the scroll view
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    // Updates the NSTextView when the bound text changes
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        // Access the text view within the scroll view
-        if let textView = scrollView.documentView as? NSTextView {
-            // Update the text view's content only if it differs from the binding
-            if textView.string != text {
-                // Preserve current selection if possible
-                let selectedRange = textView.selectedRange()
-                textView.string = text
-                textView.setSelectedRange(selectedRange) // Try to restore selection
-            }
-        }
-    }
-
-    // Coordinator class to handle NSTextViewDelegate callbacks
-    class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: TransparentTextEditor // Reference to the parent struct
-
-        init(_ parent: TransparentTextEditor) {
-            self.parent = parent
-        }
-
-        // Called when the text in the NSTextView changes
-        func textDidChange(_ notification: Notification) {
-            // Ensure the notification object is an NSTextView
-            guard let textView = notification.object as? NSTextView else { return }
-            // Update the bound text property in the parent SwiftUI view
-            parent.text = textView.string
-        }
     }
 }

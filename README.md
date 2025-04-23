@@ -1,4 +1,3 @@
-# ComfySpotlight
 
 Floating transparent notes for macOS.  
 Simple. Fast. Always ready.
@@ -9,7 +8,6 @@ Simple. Fast. Always ready.
 
 | Layer | Description | Status |
 |:------|:------------|:------:|
-| 1️⃣ | Hotkey to open "ComfyCommand" search | ❌ Not built yet |
 | 2️⃣ | Launcher Panel UI (small search box) | ❌ Not built yet |
 | 3️⃣ | Search existing notes | ❌ Not built yet |
 | 4️⃣ | Select or create a new note | ❌ Not built yet |
